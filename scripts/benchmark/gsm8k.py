@@ -11,7 +11,7 @@ import torch
 
 wd = Path(__file__).parent.parent.resolve()
 sys.path.append(str(wd))
-from utils import load_checkpoints
+from benchmark._utils import load_checkpoints
 from generate._generation import generate
 
 ANS_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
