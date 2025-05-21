@@ -20,8 +20,12 @@ def logits_to_probs(
     logits: torch.Tensor,
     temperature: float = 1.0,
     top_k: Optional[int] = None,
+    top_p: Optional[float] = None,
 ) -> torch.Tensor:
     logits = logits / max(temperature, 1e-5)
+
+    if top_p is not None:
+        top_k = int(logits.size(-1) * top_p)
 
     if top_k is not None:
         v, _ = torch.topk(logits, k=min(top_k, logits.size(-1)))
@@ -38,10 +42,11 @@ def generate_next_token(
     *,
     temperature: float = 1.0,
     top_k: Optional[int] = None,
+    top_p: Optional[float] = None,
     rng: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
     logits = model(x)  # (B, T, vocab_size)
-    probs = logits_to_probs(logits[:, -1, :], temperature, top_k)
+    probs = logits_to_probs(logits[:, -1, :], temperature, top_k, top_p)
     next_token = multinomial_sample_one(probs, rng=rng)
     return next_token
 
@@ -54,6 +59,7 @@ def generate(
     max_new_tokens: int,
     temperature: float = 1.0,
     top_k: Optional[int] = None,
+    top_p: Optional[float] = None,
     seed: Optional[int] = None,
 ) -> torch.Tensor:
     # ensure batch dimension (T,) --> (B, T)
@@ -72,6 +78,7 @@ def generate(
             x=generated_tokens,
             temperature=temperature,
             top_k=top_k,
+            top_p=top_p,
             rng=rng,
         )
 

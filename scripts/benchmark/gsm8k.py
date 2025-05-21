@@ -240,7 +240,7 @@ def parse_args():
     parser.add_argument(
         "--data_root",
         type=str,
-        default="./data",
+        default="/nfs/eval_dataset/",
         help="The root folder of the data.",
     )
     parser.add_argument(
@@ -292,7 +292,7 @@ def generate_resp(model, tokenizer, input_text, **argvs):
 def main():
     args = parse_args()
 
-    test_filepath = os.path.join(args.data_root, "gsm8k_test.jsonl")
+    test_filepath = os.path.join(args.data_root, "gsm8k.jsonl")
     list_data_dict = load_jsonl(test_filepath, instruction="question", output="answer")
 
     model, tokenizer = load_checkpoints(
