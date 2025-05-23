@@ -13,7 +13,7 @@ from torchtitan.datasets.hf_datasets import build_hf_dataloader
 from torchtitan.datasets.tokenizer.tiktoken import build_tiktoken_tokenizer
 from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
 
-from .model_mamba2 import Transformer, TransformerModelArgs
+from .model_nsa import Transformer, TransformerModelArgs
 from .parallelize_llama import parallelize_llama
 from .pipeline_llama import pipeline_llama
 
@@ -42,7 +42,8 @@ llama3_configs = {
         dim=2048,
         n_layers=24,
         n_heads=16,
-        n_kv_heads=8,
+        # n_kv_heads=8,
+        n_kv_heads=1,
         ffn_dim_multiplier=1.3,
         multiple_of=512,
         rope_theta=500000,

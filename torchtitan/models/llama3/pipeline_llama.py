@@ -28,7 +28,7 @@ from torchtitan.distributed.pipeline import (
 from torchtitan.protocols.train_spec import DeviceType, ParallelizeFunction
 from torchtitan.tools.logging import logger
 
-from .model_mamba2 import TransformerModelArgs
+from .model_nsa import TransformerModelArgs
 
 
 def pipeline_llama(
