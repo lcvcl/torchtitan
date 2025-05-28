@@ -45,6 +45,8 @@ class TransformerModelArgs(BaseModelArgs):
     moba_alpha_init: float = 1.0
     moba_beta_init: float = 1.0
     moba_gamma_init: float = 1.0
+    moba_chunk_size: int = 64
+    moba_topk: int = 8
 
     def update_from_config(self, job_config: JobConfig, tokenizer: Tokenizer) -> None:
         self.vocab_size = tokenizer.n_words

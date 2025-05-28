@@ -21,7 +21,7 @@ from .model import TransformerModelArgs
 #from .model_mamba2 import Transformer as Mamba2Transformer
 #from .model_mamba2 import TransformerModelArgs as Mamba2TransformerModelArgs
 from .model_moba import TransformerMoBA
-from .model_moba import TransformerModelArgs as MoBATransformerModelArgs
+from .model_moba import MoBATransformerModelArgs
 
 __all__ = [
     "parallelize_llama",
@@ -96,6 +96,11 @@ llama3_configs = {
     ),
 }
 
+# Create Moba configs by converting base configs to MoBATransformerModelArgs
+llama3_moba_configs = {
+    name: MoBATransformerModelArgs(**config.__dict__)
+    for name, config in llama3_configs.items()
+}
 
 register_train_spec(
     TrainSpec(
@@ -117,7 +122,7 @@ register_train_spec(
     TrainSpec(
         name="llama3_moba",
         cls=TransformerMoBA,
-        config=llama3_configs,
+        config=llama3_moba_configs,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llama,
         build_optimizers_fn=build_optimizers,

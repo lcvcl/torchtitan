@@ -32,10 +32,6 @@ from .moba.moba_efficient import moba_attn_varlen
 
 @dataclass
 class MoBATransformerModelArgs(TransformerModelArgs):
-    # Override Moba specific parameters
-    moba_chunk_size: int = 64
-    moba_topk: int = 8
-
     def update_from_config(self, job_config: JobConfig, tokenizer: Tokenizer) -> None:
         super().update_from_config(job_config, tokenizer)
 
