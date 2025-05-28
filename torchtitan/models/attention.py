@@ -16,6 +16,8 @@ from torch.nn.attention.flex_attention import (
     create_block_mask,
     flex_attention,
 )
+import torch.nn as nn
+import math
 
 
 # FlexAttention mask type. For each mask type, we initialize it at most once per
@@ -193,21 +195,31 @@ class ScaledDotProductAttention(torch.nn.Module):
 
 
 def build_attention(
-    use_flex_attn: bool, attn_mask_type: str, fixed_block_size: int | None = None
+    use_flex_attn: bool, 
+    attn_mask_type: str, 
+    fixed_block_size: int | None = None
 ):
+    """Build attention module based on configuration.
+
+    Args:
+        use_flex_attn (bool): Whether to use flex attention.
+        attn_mask_type (str): The type of attention mask.
+        fixed_block_size (int | None): The block size to be used to perform attention.
+
+    Returns:
+        torch.nn.Module: The attention module.
+    """
     if use_flex_attn:
         return FlexAttention(attn_mask_type, fixed_block_size)
     else:
-        if fixed_block_size is not None:
-            raise ValueError(
-                "TorchTitan with SDPA currently does not support fixed_block_size."
-            )
-        if attn_mask_type != "causal":
-            raise ValueError(
-                "TorchTitan with SDPA currently only supports causal mask."
-            )
         return ScaledDotProductAttention(attn_mask_type)
 
 
 def init_attention_mask(batch: torch.Tensor, eos_id: int | None = None) -> None:
+    """Initialize attention mask for the batch.
+
+    Args:
+        batch (torch.Tensor): The input batch.
+        eos_id (int | None): The end of sequence token id.
+    """
     FlexAttention.init_attention_mask(batch, eos_id)

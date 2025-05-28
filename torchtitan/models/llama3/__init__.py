@@ -16,6 +16,12 @@ from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
 from .model_lighting import Transformer, TransformerModelArgs
 from .parallelize_llama import parallelize_llama
 from .pipeline_llama import pipeline_llama
+from .model import Transformer as DefaultTransformer
+from .model import TransformerModelArgs as DefaultTransformerModelArgs
+from .model_mamba2 import Transformer as Mamba2Transformer
+from .model_mamba2 import TransformerModelArgs as Mamba2TransformerModelArgs
+from .model_moba import Transformer as MobaTransformer
+from .model_moba import TransformerModelArgs as MobaTransformerModelArgs
 
 __all__ = [
     "parallelize_llama",
@@ -23,6 +29,12 @@ __all__ = [
     "TransformerModelArgs",
     "Transformer",
     "llama3_configs",
+    "DefaultTransformer",
+    "DefaultTransformerModelArgs",
+    "Mamba2Transformer",
+    "Mamba2TransformerModelArgs",
+    "MobaTransformer",
+    "MobaTransformerModelArgs",
 ]
 
 
@@ -91,6 +103,22 @@ register_train_spec(
     TrainSpec(
         name="llama3",
         cls=Transformer,
+        config=llama3_configs,
+        parallelize_fn=parallelize_llama,
+        pipelining_fn=pipeline_llama,
+        build_optimizers_fn=build_optimizers,
+        build_lr_schedulers_fn=build_lr_schedulers,
+        build_dataloader_fn=build_hf_dataloader,
+        build_tokenizer_fn=build_tiktoken_tokenizer,
+        build_loss_fn=build_cross_entropy_loss,
+    )
+)
+
+# Register Moba model
+register_train_spec(
+    TrainSpec(
+        name="llama3_moba",
+        cls=MobaTransformer,
         config=llama3_configs,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llama,
