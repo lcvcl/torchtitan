@@ -18,8 +18,8 @@ from .parallelize_llama import parallelize_llama
 from .pipeline_llama import pipeline_llama
 from .model import Transformer as DefaultTransformer
 from .model import TransformerModelArgs as DefaultTransformerModelArgs
-from .model_mamba2 import Transformer as Mamba2Transformer
-from .model_mamba2 import TransformerModelArgs as Mamba2TransformerModelArgs
+#from .model_mamba2 import Transformer as Mamba2Transformer
+#from .model_mamba2 import TransformerModelArgs as Mamba2TransformerModelArgs
 from .model_moba import TransformerMoBA
 from .model_moba import TransformerModelArgs
 from .model_moba import MoBAAttention
