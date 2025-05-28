@@ -42,6 +42,7 @@ class MoBAAttention(Attention):
             moba_chunk_size=model_args.moba_chunk_size,
             moba_topk=model_args.moba_topk
         )
+        self.is_causal = True
 
     def forward(
         self,
