@@ -17,7 +17,6 @@ from torchtitan.components.tokenizer import Tokenizer
 from torchtitan.config_manager import JobConfig
 from torchtitan.models.attention import build_attention, init_attention_mask
 from torchtitan.protocols.train_spec import BaseModelArgs, ModelProtocol
-from fla.ops.attn.parallel import parallel_attn
 
 
 @dataclass
@@ -211,7 +210,7 @@ class Attention(nn.Module):
         self.wo = nn.Linear(
             model_args.n_heads * self.head_dim, model_args.dim, bias=False
         )
-        # self.sdpa = build_attention(model_args.use_flex_attn, model_args.attn_mask_type)
+        self.sdpa = build_attention(model_args.use_flex_attn, model_args.attn_mask_type)
 
     def init_weights(self, init_std: float):
         for linear in (self.wq, self.wk, self.wv):
@@ -251,16 +250,15 @@ class Attention(nn.Module):
         keys = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
         values = repeat_kv(xv, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
 
-        # xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        # xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        # xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
-        # output = self.sdpa(xq, xk, xv)
-        output = parallel_attn(xq, xk, xv)
+        output = self.sdpa(xq, xk, xv)
 
-        # output = output.transpose(
-        #     1, 2
-        # ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        output = output.transpose(
+            1, 2
+        ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
 

@@ -17,7 +17,9 @@ from torchtitan.components.tokenizer import Tokenizer
 from torchtitan.config_manager import JobConfig
 from torchtitan.models.attention import build_attention, init_attention_mask
 from torchtitan.protocols.train_spec import BaseModelArgs, ModelProtocol
-from fla.ops.attn.parallel import parallel_attn
+
+from lightning_attn.ops import lightning_attn_func
+from lightning_attn.utils import _build_slope_tensor
 
 
 @dataclass
@@ -251,16 +253,18 @@ class Attention(nn.Module):
         keys = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
         values = repeat_kv(xv, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
 
-        # xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        # xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        # xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
 
         # output = self.sdpa(xq, xk, xv)
-        output = parallel_attn(xq, xk, xv)
+        s = _build_slope_tensor(self.n_heads).to(xq.device).to(torch.float32)
 
-        # output = output.transpose(
-        #     1, 2
-        # ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        output = lightning_attn_func(xq, xk, xv, s)
+
+        output = output.transpose(
+            1, 2
+        ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
 

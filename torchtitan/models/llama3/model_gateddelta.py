@@ -177,17 +177,41 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 class Attention(nn.Module):
     """
     替换为GatedDeltaNet线性Attention模块
+    NOTE: num_heads * head_dim = 0.75 * hidden_size
     """
 
     def __init__(self, model_args):
         super().__init__()
         self.model_args = model_args
+        hidden_size = model_args.dim  # 2048
+        target = 0.75 * hidden_size   # 1536
 
+        # 优先使用 model_args.n_heads（16），计算 head_dim
+        num_heads = model_args.n_heads  # 16
+        head_dim = target // num_heads  # 1536 // 16 = 96
+
+        # 强制满足约束（理论上不会触发，因为 1536 = 16 * 96）
+        assert num_heads * head_dim == target, \
+            f"num_heads ({num_heads}) * head_dim ({head_dim}) != {target}"
+
+        # self.attention = GatedDeltaNet(
+        #     hidden_size=model_args.dim,
+        #     expand_v=2.0,
+        #     head_dim=model_args.dim // model_args.n_heads,
+        #     num_heads=model_args.n_heads,
+        #     mode='chunk',
+        #     use_gate=True,
+        #     use_short_conv=True,
+        #     conv_size=4,
+        #     conv_bias=False,
+        #     layer_idx=None,
+        #     norm_eps=1e-5,
+        # )
         self.attention = GatedDeltaNet(
             hidden_size=model_args.dim,
             expand_v=2.0,
-            head_dim=model_args.dim // model_args.n_heads,
-            num_heads=model_args.n_heads,
+            head_dim=head_dim,  # 96
+            num_heads=num_heads,  # 16 → 调整为 12（如果无法整除）
             mode='chunk',
             use_gate=True,
             use_short_conv=True,
