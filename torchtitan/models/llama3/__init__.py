@@ -28,14 +28,13 @@ __all__ = [
     "parallelize_llama",
     "pipeline_llama",
     "TransformerModelArgs",
-    "Transformer",
-    "llama3_configs",
     "DefaultTransformer",
+    "llama3_configs",
     "DefaultTransformerModelArgs",
     "Mamba2Transformer",
     "Mamba2TransformerModelArgs",
-    "MobaTransformer",
-    "MobaTransformerModelArgs",
+    "TransformerMoBA",
+    "TransformerModelArgs",
 ]
 
 
@@ -103,7 +102,7 @@ llama3_configs = {
 register_train_spec(
     TrainSpec(
         name="llama3",
-        cls=Transformer,
+        cls=DefaultTransformer,
         config=llama3_configs,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llama,
