@@ -16,25 +16,23 @@ from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
 #from .model_lighting import Transformer, TransformerModelArgs
 from .parallelize_llama import parallelize_llama
 from .pipeline_llama import pipeline_llama
-from .model import Transformer as DefaultTransformer
-from .model import TransformerModelArgs as DefaultTransformerModelArgs
+from .model import Transformer
+from .model import TransformerModelArgs
 #from .model_mamba2 import Transformer as Mamba2Transformer
 #from .model_mamba2 import TransformerModelArgs as Mamba2TransformerModelArgs
 from .model_moba import TransformerMoBA
-from .model_moba import TransformerModelArgs
-from .model_moba import MoBAAttention
+from .model_moba import TransformerModelArgs as MoBATransformerModelArgs
 
 __all__ = [
     "parallelize_llama",
     "pipeline_llama",
+    "Transformer",
     "TransformerModelArgs",
-    "DefaultTransformer",
     "llama3_configs",
-    "DefaultTransformerModelArgs",
     "Mamba2Transformer",
     "Mamba2TransformerModelArgs",
     "TransformerMoBA",
-    "TransformerModelArgs",
+    "MoBATransformerModelArgs",
 ]
 
 
@@ -102,7 +100,7 @@ llama3_configs = {
 register_train_spec(
     TrainSpec(
         name="llama3",
-        cls=DefaultTransformer,
+        cls=Transformer,
         config=llama3_configs,
         parallelize_fn=parallelize_llama,
         pipelining_fn=pipeline_llama,

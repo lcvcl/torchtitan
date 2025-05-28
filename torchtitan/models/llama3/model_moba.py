@@ -16,7 +16,7 @@ from torchtitan.config_manager import JobConfig
 from torchtitan.protocols.train_spec import BaseModelArgs
 from torchtitan.models.attention import build_attention, init_attention_mask
 from .model import (
-    TransformerModelArgs as BaseTransformerModelArgs,
+    TransformerModelArgs,
     Transformer,
     Attention,
     FeedForward,
@@ -31,7 +31,7 @@ from .moba.wrapper import moba_layer
 from .moba.moba_efficient import moba_attn_varlen
 
 @dataclass
-class TransformerModelArgs(BaseTransformerModelArgs):
+class MoBATransformerModelArgs(TransformerModelArgs):
     # Override Moba specific parameters
     moba_chunk_size: int = 64
     moba_topk: int = 8
@@ -40,7 +40,7 @@ class TransformerModelArgs(BaseTransformerModelArgs):
         super().update_from_config(job_config, tokenizer)
 
 class MoBAAttention(Attention):
-    def __init__(self, model_args: TransformerModelArgs):
+    def __init__(self, model_args: MoBATransformerModelArgs):
         super().__init__(model_args)
         self.moba_config = MoBAConfig(
             moba_chunk_size=model_args.moba_chunk_size,
@@ -83,12 +83,12 @@ class MoBAAttention(Attention):
         return self.wo(output)
 
 class TransformerMoBA(Transformer):
-    def __init__(self, model_args: TransformerModelArgs):
+    def __init__(self, model_args: MoBATransformerModelArgs):
         super().__init__(model_args)
         # Override the attention module with MoBA attention
         for layer in self.layers.values():
             layer.attention = MoBAAttention(model_args)
 
     @classmethod
-    def from_model_args(cls, model_args: TransformerModelArgs) -> "TransformerMoBA":
+    def from_model_args(cls, model_args: MoBATransformerModelArgs) -> "TransformerMoBA":
         return cls(model_args) 
