@@ -28,8 +28,7 @@ from .model import (
 )
 from .moba.config import MoBAConfig
 from .moba.wrapper import moba_layer
-from .moba.moba_efficient import moba_efficient
-from .moba.attention import MoBAAttention
+from .moba.moba_efficient import moba_attn_varlen
 
 @dataclass
 class TransformerModelArgs(BaseTransformerModelArgs):
@@ -71,7 +70,7 @@ class MoBAAttention(Attention):
 
         # Use Moba attention
         output, _ = moba_layer(
-            moba_impl=moba_efficient,
+            moba_impl=moba_attn_varlen,
             moba_config=self.moba_config,
             module=self,
             query=xq,
