@@ -174,18 +174,13 @@ class MixedAttention(torch.autograd.Function):
         output = output.to(q.dtype)
         # add back max lse
         mixed_attn_lse_sh = mixed_attn_lse_sh + max_lse_1d.view_as(mixed_attn_se_sh)
+
+        # Save tensors for backward pass
         ctx.save_for_backward(
-            output,
-            mixed_attn_lse_sh,
-            q,
-            k,
-            v,
-            self_attn_cu_seqlen,
-            moba_q,
-            moba_kv,
-            moba_cu_seqlen_q,
-            moba_cu_seqlen_kv,
-            moba_q_sh_indices,
+            q, k, v, output, mixed_attn_lse_sh,
+            self_attn_cu_seqlen, self_attn_cu_seqlen,
+            moba_q, moba_kv, moba_cu_seqlen_q, moba_cu_seqlen_kv,
+            moba_q_sh_indices
         )
 
         return output
@@ -196,18 +191,12 @@ class MixedAttention(torch.autograd.Function):
         moba_chunk_size = ctx.moba_chunk_size
         softmax_scale = ctx.softmax_scale
 
+        # Get saved tensors
         (
-            output,
-            mixed_attn_vlse_sh,
-            q,
-            k,
-            v,
-            self_attn_cu_seqlen,
-            moba_q,
-            moba_kv,
-            moba_cu_seqlen_q,
-            moba_cu_seqlen_kv,
-            moba_q_sh_indices,
+            q, k, v, output, mixed_attn_lse_sh,
+            self_attn_cu_seqlen, self_attn_cu_seqlen,
+            moba_q, moba_kv, moba_cu_seqlen_q, moba_cu_seqlen_kv,
+            moba_q_sh_indices
         ) = ctx.saved_tensors
 
         d_output = d_output.contiguous()
@@ -218,7 +207,7 @@ class MixedAttention(torch.autograd.Function):
             k,
             v,
             output,
-            mixed_attn_vlse_sh.t().contiguous(),
+            mixed_attn_lse_sh.t().contiguous(),
             self_attn_cu_seqlen,
             self_attn_cu_seqlen,
             max_seqlen,
@@ -242,7 +231,7 @@ class MixedAttention(torch.autograd.Function):
         )
 
         mixed_attn_vlse = (
-            mixed_attn_vlse_sh.view(-1).index_select(0, moba_q_sh_indices).view(1, -1)
+            mixed_attn_lse_sh.view(-1).index_select(0, moba_q_sh_indices).view(1, -1)
         )
 
         dmq, dmk, dmv = FlashAttnVarlenFunc.backward(
