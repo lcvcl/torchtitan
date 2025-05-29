@@ -259,6 +259,20 @@ class MixedAttention(torch.autograd.Function):
         if dmv.numel() == moba_kv[:, 1].numel():
             dmv.copy_(dmv.view_as(moba_kv[:, 1]))
 
+        # Ensure the shapes match the expected shapes while preserving the computation
+        if dmk.shape != moba_kv[:, 0].shape:
+            # Reshape while preserving the computation
+            dmk = dmk.reshape(-1, moba_kv[:, 0].shape[-1])
+            if dmk.shape[0] != moba_kv[:, 0].shape[0]:
+                # If the first dimension doesn't match, we need to adjust
+                dmk = dmk[:moba_kv[:, 0].shape[0]]
+        if dmv.shape != moba_kv[:, 1].shape:
+            # Reshape while preserving the computation
+            dmv = dmv.reshape(-1, moba_kv[:, 1].shape[-1])
+            if dmv.shape[0] != moba_kv[:, 1].shape[0]:
+                # If the first dimension doesn't match, we need to adjust
+                dmv = dmv[:moba_kv[:, 1].shape[0]]
+
         dmkv = torch.stack((dmk, dmv), dim=1)
         return dq, dk, dv, None, dmq, dmkv, None, None, None, None, None
 
