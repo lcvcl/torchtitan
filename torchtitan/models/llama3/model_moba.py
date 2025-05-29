@@ -42,15 +42,15 @@ class MoBATransformerModelArgs(TransformerModelArgs):
     def update_from_config(self, job_config: JobConfig, tokenizer: Tokenizer) -> None:
         super().update_from_config(job_config, tokenizer)
         # Update Moba parameters from config if they exist
-        if "moba_chunk_size" in job_config.model:
+        if hasattr(job_config.model, "moba_chunk_size"):
             self.moba_chunk_size = job_config.model.moba_chunk_size
-        if "moba_topk" in job_config.model:
+        if hasattr(job_config.model, "moba_topk"):
             self.moba_topk = job_config.model.moba_topk
-        if "moba_alpha_init" in job_config.model:
+        if hasattr(job_config.model, "moba_alpha_init"):
             self.moba_alpha_init = job_config.model.moba_alpha_init
-        if "moba_beta_init" in job_config.model:
+        if hasattr(job_config.model, "moba_beta_init"):
             self.moba_beta_init = job_config.model.moba_beta_init
-        if "moba_gamma_init" in job_config.model:
+        if hasattr(job_config.model, "moba_gamma_init"):
             self.moba_gamma_init = job_config.model.moba_gamma_init
 
 class MoBAAttention(Attention):
