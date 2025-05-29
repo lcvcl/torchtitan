@@ -132,3 +132,16 @@ register_train_spec(
         build_loss_fn=build_cross_entropy_loss,
     )
 )
+
+from ..moba.init import register_moba
+from ..moba.config import MoBAConfig
+from .model_moba import MoBATransformerModelArgs
+
+# 从 MoBATransformerModelArgs 中拿到默认的 chunk_size 和 topk
+_default_moba_cfg = MoBAConfig(
+    chunk_size=MoBATransformerModelArgs().moba_chunk_size,
+    topk=      MoBATransformerModelArgs().moba_topk,
+)
+
+# 只要 import 了这个包，就会把 "moba" 和 "moba_naive" 注册到 ALL_ATTENTION_FUNCTIONS
+register_moba(_default_moba_cfg)

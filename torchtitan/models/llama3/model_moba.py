@@ -33,6 +33,7 @@ from .moba.moba_efficient import moba_attn_varlen
 @dataclass
 class MoBATransformerModelArgs(TransformerModelArgs):
     # Moba specific parameters
+    attention_type = "moba"
     moba_chunk_size: int = 64  # Size of each chunk for Moba attention
     moba_topk: int = 8  # Number of top chunks to attend to
     moba_alpha_init: float = 1.0  # Initial value for alpha parameter

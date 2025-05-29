@@ -45,7 +45,7 @@ def moba_layer(
         value (torch.Tensor): [batch, kv_heads, kv_len, head_dim]
 
     Returns:
-        attn_output (torch.Tensor): [batch, q_len, q_heads, head_dim]
+        attn_output (torch.Tensor): [batch, seqlen, heads, head_dim]
         attn_weights (None): not needed
     """
     assert module.is_causal
@@ -73,6 +73,10 @@ def moba_layer(
             moba_chunk_size=moba_config.moba_chunk_size,
             moba_topk=moba_config.moba_topk,
         )
+        # ===== 新增：把 Flash-Attn 格式转换回 HF 格式 =====
+        # out: [batch*seqlen, heads, head_dim]
+        out = fa_to_hf(out, batch)                   # -> [batch, heads, seqlen, head_dim]
+        out = out.permute(0, 2, 1, 3).contiguous()   # -> [batch, seqlen, heads, head_dim]
     else:
         # decode phase
         # TODO release paged attn implementation
@@ -80,5 +84,6 @@ def moba_layer(
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
         out = flash_attn_func(query, key, value, dropout, scaling, True)
-    # out = fa_to_hf(out, batch)
+        # flash_attn_func 本来就返回 [batch, heads, seqlen, head_dim]
+        out = out.transpose(1, 2).contiguous()      # -> [batch, seqlen, heads, head_dim]
     return out, None
