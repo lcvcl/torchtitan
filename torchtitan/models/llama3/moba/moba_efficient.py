@@ -1,8 +1,12 @@
 """A clean version of efficient moba implementation with flash-attn"""
 
 import torch
+
 from flash_attn import flash_attn_varlen_func
-from flash_attn.flash_attn_interface import FlashAttnVarlenFunc
+from flash_attn.flash_attn_interface import (
+    _flash_attn_varlen_forward,
+    _flash_attn_varlen_backward,
+)
 from functools import lru_cache
 from einops import rearrange
 
@@ -82,45 +86,33 @@ class MixedAttention(torch.autograd.Function):
         ctx.softmax_scale = softmax_scale = q.shape[-1] ** (-0.5)
 
         # self attn
-        self_attn_out_sh, self_attn_lse_hs, _ = FlashAttnVarlenFunc.apply(
-            q,
-            k,
-            v,
-            self_attn_cu_seqlen,
-            self_attn_cu_seqlen,
-            max_seqlen,
-            max_seqlen,
-            0.0,  # dropout_p
-            softmax_scale,
-            True,  # causal
-            (-1, -1),  # window_size
-            0.0,  # softcap
-            None,  # alibi_slopes
-            False,  # deterministic
-            True,  # return_attn_probs
-            None,  # block_table
-            torch.is_grad_enabled(),
+        _, _, _, _, self_attn_out_sh, self_attn_lse_hs, _, _ = (
+            _flash_attn_varlen_forward(
+                q=q,
+                k=k,
+                v=v,
+                cu_seqlens_q=self_attn_cu_seqlen,
+                cu_seqlens_k=self_attn_cu_seqlen,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                softmax_scale=softmax_scale,
+                causal=True,
+                dropout_p=0.0,
+            )
         )
 
         # moba attn
-        moba_attn_out, moba_attn_lse_hs, _ = FlashAttnVarlenFunc.apply(
-            moba_q,
-            moba_kv[:, 0],
-            moba_kv[:, 1],
-            moba_cu_seqlen_q,
-            moba_cu_seqlen_kv,
-            max_seqlen,
-            moba_chunk_size,
-            0.0,  # dropout_p
-            softmax_scale,
-            False,  # causal
-            (-1, -1),  # window_size
-            0.0,  # softcap
-            None,  # alibi_slopes
-            False,  # deterministic
-            True,  # return_attn_probs
-            None,  # block_table
-            torch.is_grad_enabled(),
+        _, _, _, _, moba_attn_out, moba_attn_lse_hs, _, _ = _flash_attn_varlen_forward(
+            q=moba_q,
+            k=moba_kv[:, 0],
+            v=moba_kv[:, 1],
+            cu_seqlens_q=moba_cu_seqlen_q,
+            cu_seqlens_k=moba_cu_seqlen_kv,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=moba_chunk_size,
+            softmax_scale=softmax_scale,
+            causal=False,
+            dropout_p=0.0,
         )
 
         # convert lse shape hs -> sh ( follow the legacy mix attn logic )
@@ -174,64 +166,67 @@ class MixedAttention(torch.autograd.Function):
         output = output.to(q.dtype)
         # add back max lse
         mixed_attn_lse_sh = mixed_attn_lse_sh + max_lse_1d.view_as(mixed_attn_se_sh)
-
-        # Save tensors for backward pass
         ctx.save_for_backward(
-            q, k, v, output, mixed_attn_lse_sh,
-            self_attn_cu_seqlen, self_attn_cu_seqlen,
-            moba_q, moba_kv, moba_cu_seqlen_q, moba_cu_seqlen_kv,
-            moba_q_sh_indices
+            output,
+            mixed_attn_lse_sh,
+            q,
+            k,
+            v,
+            self_attn_cu_seqlen,
+            moba_q,
+            moba_kv,
+            moba_cu_seqlen_q,
+            moba_cu_seqlen_kv,
+            moba_q_sh_indices,
         )
 
         return output
 
     @staticmethod
     def backward(ctx, d_output):
+
         max_seqlen = ctx.max_seqlen
         moba_chunk_size = ctx.moba_chunk_size
         softmax_scale = ctx.softmax_scale
 
-        # Get saved tensors
         (
-            q, k, v, output, mixed_attn_lse_sh,
-            self_attn_cu_seqlen, self_attn_cu_seqlen,
-            moba_q, moba_kv, moba_cu_seqlen_q, moba_cu_seqlen_kv,
-            moba_q_sh_indices
-        ) = ctx.saved_tensors
-
-        d_output = d_output.contiguous()
-
-        # 写入调试信息到文件
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"=== Backward Debug Info ===", file=f, flush=True)
-            print(f"Input shapes and sizes:", file=f, flush=True)
-            print(f"q shape: {q.shape}, size: {q.numel()}", file=f, flush=True)
-            print(f"k shape: {k.shape}, size: {k.numel()}", file=f, flush=True)
-            print(f"v shape: {v.shape}, size: {v.numel()}", file=f, flush=True)
-            print(f"moba_kv shape: {moba_kv.shape}, size: {moba_kv.numel()}", file=f, flush=True)
-            print(f"moba_q shape: {moba_q.shape}, size: {moba_q.numel()}", file=f, flush=True)
-            print(f"d_output shape: {d_output.shape}, size: {d_output.numel()}", file=f, flush=True)
-
-        # Self attention backward
-        dq, dk, dv = flash_attn_varlen_func(
+            output,
+            mixed_attn_vlse_sh,
             q,
             k,
             v,
             self_attn_cu_seqlen,
-            self_attn_cu_seqlen,
-            max_seqlen,
-            max_seqlen,
-            0.0,  # dropout_p
-            softmax_scale,
-            True,  # causal
-            return_attn_probs=True,
-        )
+            moba_q,
+            moba_kv,
+            moba_cu_seqlen_q,
+            moba_cu_seqlen_kv,
+            moba_q_sh_indices,
+        ) = ctx.saved_tensors
 
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"After self attention backward:", file=f, flush=True)
-            print(f"dq shape: {dq.shape}, size: {dq.numel()}", file=f, flush=True)
-            print(f"dk shape: {dk.shape}, size: {dk.numel()}", file=f, flush=True)
-            print(f"dv shape: {dv.shape}, size: {dv.numel()}", file=f, flush=True)
+        d_output = d_output.contiguous()
+
+        dq, dk, dv, _ = _flash_attn_varlen_backward(
+            dout=d_output,
+            q=q,
+            k=k,
+            v=v,
+            out=output,
+            softmax_lse=mixed_attn_vlse_sh.t().contiguous(),
+            dq=None,
+            dk=None,
+            dv=None,
+            cu_seqlens_q=self_attn_cu_seqlen,
+            cu_seqlens_k=self_attn_cu_seqlen,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=max_seqlen,
+            softmax_scale=softmax_scale,
+            causal=True,
+            dropout_p=0.0,
+            window_size=(-1, -1),
+            softcap=0.0,
+            alibi_slopes=None,
+            deterministic=True,
+        )
 
         headdim = q.shape[-1]
         d_moba_output = (
@@ -242,111 +237,33 @@ class MixedAttention(torch.autograd.Function):
         )
 
         mixed_attn_vlse = (
-            mixed_attn_lse_sh.view(-1).index_select(0, moba_q_sh_indices).view(1, -1)
+            mixed_attn_vlse_sh.view(-1).index_select(0, moba_q_sh_indices).view(1, -1)
         )
 
-        # MOBA attention backward
-        dmq, dmk, dmv = flash_attn_varlen_func(
-            moba_q,
-            moba_kv[:, 0],
-            moba_kv[:, 1],
-            moba_cu_seqlen_q,
-            moba_cu_seqlen_kv,
-            max_seqlen,
-            moba_chunk_size,
-            0.0,  # dropout_p
-            softmax_scale,
-            False,  # causal
-            return_attn_probs=True,
+        dmq, dmk, dmv, _ = _flash_attn_varlen_backward(
+            dout=d_moba_output,
+            q=moba_q,
+            k=moba_kv[:, 0],
+            v=moba_kv[:, 1],
+            out=moba_output,
+            softmax_lse=mixed_attn_vlse,
+            dq=None,
+            dk=None,
+            dv=None,
+            cu_seqlens_q=moba_cu_seqlen_q,
+            cu_seqlens_k=moba_cu_seqlen_kv,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=moba_chunk_size,
+            softmax_scale=softmax_scale,
+            causal=False,
+            dropout_p=0.0,
+            window_size=(-1, -1),
+            softcap=0.0,
+            alibi_slopes=None,
+            deterministic=True,
         )
 
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"After MOBA attention backward:", file=f, flush=True)
-            print(f"dmq shape: {dmq.shape}, size: {dmq.numel()}", file=f, flush=True)
-            print(f"dmk shape: {dmk.shape}, size: {dmk.numel()}", file=f, flush=True)
-            print(f"dmv shape: {dmv.shape}, size: {dmv.numel()}", file=f, flush=True)
-
-        # Transform gradients to match original shapes
-        num_head = 16  # From model config
-        head_dim = 128  # dim / num_head = 2048 / 16 = 128
-        
-        # Handle empty tensors
-        if dmk.numel() == 0 or dmv.numel() == 0:
-            with open("/tmp/moba_debug.log", "a") as f:
-                print(f"Empty tensor detected:", file=f, flush=True)
-                print(f"dmk empty: {dmk.numel() == 0}", file=f, flush=True)
-                print(f"dmv empty: {dmv.numel() == 0}", file=f, flush=True)
-            
-            # Create zero tensors with the correct shape
-            dmk = torch.zeros((2048, num_head, head_dim), device=dmk.device, dtype=dmk.dtype)
-            dmv = torch.zeros((2048, num_head, head_dim), device=dmv.device, dtype=dmv.dtype)
-        
-        # Ensure dmk and dmv have the same shape
-        if dmk.shape != dmv.shape:
-            with open("/tmp/moba_debug.log", "a") as f:
-                print(f"Shape mismatch between dmk and dmv:", file=f, flush=True)
-                print(f"dmk shape: {dmk.shape}", file=f, flush=True)
-                print(f"dmv shape: {dmv.shape}", file=f, flush=True)
-            
-            # Reshape to match the larger tensor
-            target_shape = max(dmk.shape, dmv.shape)
-            if dmk.shape != target_shape:
-                dmk = dmk.expand(target_shape)
-            if dmv.shape != target_shape:
-                dmv = dmv.expand(target_shape)
-        
-        # Calculate expected sizes
-        expected_size = 2048 * 2 * num_head * head_dim  # [2048, 2, 16, 128]
-        actual_size = dmk.numel() + dmv.numel()
-        
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"Size check:", file=f, flush=True)
-            print(f"Expected total size: {expected_size}", file=f, flush=True)
-            print(f"Actual total size: {actual_size}", file=f, flush=True)
-        
-        # Stack k and v gradients
-        dmkv = torch.stack((dmk, dmv), dim=1)  # [seqlen, 2, head, head_dim]
-        
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"After stacking:", file=f, flush=True)
-            print(f"dmkv shape: {dmkv.shape}, size: {dmkv.numel()}", file=f, flush=True)
-
-        # Ensure the shape matches the expected output shape
-        if dmkv.shape != (2048, 2, num_head, head_dim):
-            with open("/tmp/moba_debug.log", "a") as f:
-                print(f"Reshaping dmkv from {dmkv.shape} to (2048, 2, {num_head}, {head_dim})", file=f, flush=True)
-            
-            # Create a new tensor with the correct shape
-            new_dmkv = torch.zeros((2048, 2, num_head, head_dim), device=dmkv.device, dtype=dmkv.dtype)
-            
-            # Calculate how much data we can copy
-            actual_seqlen = min(dmkv.shape[0], 2048)
-            actual_heads = min(dmkv.shape[2], num_head)
-            actual_dim = min(dmkv.shape[3], head_dim)
-            
-            with open("/tmp/moba_debug.log", "a") as f:
-                print(f"Copying data with shapes:", file=f, flush=True)
-                print(f"actual_seqlen: {actual_seqlen}", file=f, flush=True)
-                print(f"actual_heads: {actual_heads}", file=f, flush=True)
-                print(f"actual_dim: {actual_dim}", file=f, flush=True)
-            
-            # Copy the data we have
-            new_dmkv[:actual_seqlen, :2, :actual_heads, :actual_dim] = dmkv[:actual_seqlen, :2, :actual_heads, :actual_dim]
-            dmkv = new_dmkv
-
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"Final shapes and sizes:", file=f, flush=True)
-            print(f"dq shape: {dq.shape}, size: {dq.numel()}", file=f, flush=True)
-            print(f"dk shape: {dk.shape}, size: {dk.numel()}", file=f, flush=True)
-            print(f"dv shape: {dv.shape}, size: {dv.numel()}", file=f, flush=True)
-            print(f"dmq shape: {dmq.shape}, size: {dmq.numel()}", file=f, flush=True)
-            print(f"dmkv shape: {dmkv.shape}, size: {dmkv.numel()}", file=f, flush=True)
-            print(f"=== End Backward Debug Info ===\n", file=f, flush=True)
-
-        # Clear unnecessary tensors to free memory
-        del d_moba_output, moba_output, mixed_attn_vlse
-        torch.cuda.empty_cache()
-
+        dmkv = torch.stack((dmk, dmv), dim=1)
         return dq, dk, dv, None, dmq, dmkv, None, None, None, None, None
 
 
