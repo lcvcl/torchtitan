@@ -32,8 +32,26 @@ from .moba.moba_efficient import moba_attn_varlen
 
 @dataclass
 class MoBATransformerModelArgs(TransformerModelArgs):
+    # Moba specific parameters
+    moba_chunk_size: int = 64  # Size of each chunk for Moba attention
+    moba_topk: int = 8  # Number of top chunks to attend to
+    moba_alpha_init: float = 1.0  # Initial value for alpha parameter
+    moba_beta_init: float = 1.0  # Initial value for beta parameter
+    moba_gamma_init: float = 1.0  # Initial value for gamma parameter
+
     def update_from_config(self, job_config: JobConfig, tokenizer: Tokenizer) -> None:
         super().update_from_config(job_config, tokenizer)
+        # Update Moba parameters from config if they exist
+        if "moba_chunk_size" in job_config.model:
+            self.moba_chunk_size = job_config.model.moba_chunk_size
+        if "moba_topk" in job_config.model:
+            self.moba_topk = job_config.model.moba_topk
+        if "moba_alpha_init" in job_config.model:
+            self.moba_alpha_init = job_config.model.moba_alpha_init
+        if "moba_beta_init" in job_config.model:
+            self.moba_beta_init = job_config.model.moba_beta_init
+        if "moba_gamma_init" in job_config.model:
+            self.moba_gamma_init = job_config.model.moba_gamma_init
 
 class MoBAAttention(Attention):
     def __init__(self, model_args: MoBATransformerModelArgs):
@@ -52,28 +70,30 @@ class MoBAAttention(Attention):
         bs, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
-        # [bs, seqlen, n_heads, head_dim]
-        xq = xq.view(bs, seqlen, self.n_heads, self.head_dim)
-        xk = xk.view(bs, seqlen, self.n_heads, self.head_dim)
-        xv = xv.view(bs, seqlen, self.n_heads, self.head_dim)
+        # 首先将输入重塑为正确的形状
+        xq = xq.view(bs, seqlen, self.n_heads, self.head_dim)  # [bs, seqlen, n_heads, head_dim]
+        xk = xk.view(bs, seqlen, self.n_kv_heads, self.head_dim)  # [bs, seqlen, n_kv_heads, head_dim]
+        xv = xv.view(bs, seqlen, self.n_kv_heads, self.head_dim)  # [bs, seqlen, n_kv_heads, head_dim]
 
+        # 应用旋转位置编码
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        keys = repeat_kv(xk, self.n_rep)
-        values = repeat_kv(xv, self.n_rep)
+        # 扩展 key 和 value 的 head 数量
+        keys = repeat_kv(xk, self.n_rep)  # [bs, seqlen, n_heads, head_dim]
+        values = repeat_kv(xv, self.n_rep)  # [bs, seqlen, n_heads, head_dim]
 
-        # [bs, n_heads, seqlen, head_dim]
-        xq = xq.transpose(1, 2)
-        xk = keys.transpose(1, 2)
-        xv = values.transpose(1, 2)
+        # 调整维度顺序
+        xq = xq.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
+        keys = keys.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
+        values = values.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
 
         # 处理每个batch
         outputs = []
         for i in range(bs):
-            # 取当前batch的数据
+            # 取当前batch的数据并调整形状
             curr_q = xq[i].permute(1, 0, 2).contiguous()  # [seqlen, n_heads, head_dim]
-            curr_k = xk[i].permute(1, 0, 2).contiguous()
-            curr_v = xv[i].permute(1, 0, 2).contiguous()
+            curr_k = keys[i].permute(1, 0, 2).contiguous()  # [seqlen, n_heads, head_dim]
+            curr_v = values[i].permute(1, 0, 2).contiguous()  # [seqlen, n_heads, head_dim]
 
             # 当前batch的序列长度
             curr_cu_seqlens = torch.tensor([0, seqlen], device=x.device, dtype=torch.int32)
