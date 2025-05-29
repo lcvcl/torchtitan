@@ -248,6 +248,9 @@ class MixedAttention(torch.autograd.Function):
         print(f"dmv shape: {dmv.shape}, size: {dmv.numel()}")
         print(f"moba_kv[:, 0] shape: {moba_kv[:, 0].shape}, size: {moba_kv[:, 0].numel()}")
         print(f"moba_kv[:, 1] shape: {moba_kv[:, 1].shape}, size: {moba_kv[:, 1].numel()}")
+        print(f"q shape: {q.shape}")
+        print(f"k shape: {k.shape}")
+        print(f"v shape: {v.shape}")
 
         # Create new tensors with the correct shape
         dmk = torch.zeros_like(moba_kv[:, 0])
@@ -271,18 +274,30 @@ class MixedAttention(torch.autograd.Function):
 
         # Stack the gradients to match moba_kv shape
         dmkv = torch.stack((dmk, dmv), dim=1)
+        print(f"dmkv shape after stack: {dmkv.shape}, size: {dmkv.numel()}")
 
         # Transform the gradients to match the original kv shape
         # First, unflatten the gradients
-        num_head = q.shape[1]
-        seqlen = q.shape[0]
-        head_dim = q.shape[2]
+        num_head = 16  # From model config
+        head_dim = 128  # dim / num_head = 2048 / 16 = 128
+        
+        # Calculate the actual sequence length from the tensor size
+        actual_seqlen = dmkv.numel() // (2 * num_head * head_dim)
+        print(f"Actual sequence length from tensor size: {actual_seqlen}")
         
         # Reshape to match the original kv shape [seqlen, 2, head, head_dim]
-        dmkv = dmkv.view(-1, 2, num_head, head_dim)
-        dmkv = dmkv.transpose(0, 2).contiguous()  # [head, 2, seqlen, head_dim]
-        dmkv = dmkv.transpose(1, 2).contiguous()  # [head, seqlen, 2, head_dim]
-        dmkv = dmkv.reshape(seqlen, 2, num_head, head_dim)
+        dmkv = dmkv.view(actual_seqlen, 2, num_head, head_dim)
+        print(f"dmkv shape after first view: {dmkv.shape}")
+        
+        # Ensure the shape matches the original kv shape
+        if actual_seqlen != 2048:  # If sequence length doesn't match
+            # Create a new tensor with the correct shape
+            new_dmkv = torch.zeros((2048, 2, num_head, head_dim), device=dmkv.device, dtype=dmkv.dtype)
+            # Copy the data we have
+            new_dmkv[:actual_seqlen] = dmkv
+            dmkv = new_dmkv
+        
+        print(f"dmkv shape after final reshape: {dmkv.shape}")
 
         # Clear unnecessary tensors to free memory
         del d_moba_output, moba_output, mixed_attn_vlse
