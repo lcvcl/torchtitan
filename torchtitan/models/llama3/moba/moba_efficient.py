@@ -243,23 +243,21 @@ class MixedAttention(torch.autograd.Function):
             return_attn_probs=True,
         )
 
-        # Handle the case where dmk and dmv have different shapes
-        if dmk.numel() == 0 or dmv.numel() == 0:
-            # If either gradient is empty, create zero tensors with the correct shape
-            if dmk.numel() == 0:
-                dmk = torch.zeros_like(moba_kv[:, 0])
-            if dmv.numel() == 0:
-                dmv = torch.zeros_like(moba_kv[:, 1])
-        elif dmk.shape != dmv.shape:
-            # If shapes don't match, reshape to match moba_kv
-            if dmk.shape != moba_kv[:, 0].shape:
-                dmk = dmk.reshape(moba_kv[:, 0].shape)
-            if dmv.shape != moba_kv[:, 1].shape:
-                dmv = dmv.reshape(moba_kv[:, 1].shape)
+        # Print shapes for debugging
+        print(f"dmk shape: {dmk.shape}, size: {dmk.numel()}")
+        print(f"dmv shape: {dmv.shape}, size: {dmv.numel()}")
+        print(f"moba_kv[:, 0] shape: {moba_kv[:, 0].shape}, size: {moba_kv[:, 0].numel()}")
+        print(f"moba_kv[:, 1] shape: {moba_kv[:, 1].shape}, size: {moba_kv[:, 1].numel()}")
 
-        # Ensure dmk and dmv have the same shape as moba_kv
-        dmk = dmk.reshape(moba_kv[:, 0].shape)
-        dmv = dmv.reshape(moba_kv[:, 1].shape)
+        # Create new tensors with the correct shape
+        dmk = torch.zeros_like(moba_kv[:, 0])
+        dmv = torch.zeros_like(moba_kv[:, 1])
+
+        # If the original gradients have the correct number of elements, copy them
+        if dmk.numel() == moba_kv[:, 0].numel():
+            dmk.copy_(dmk.view_as(moba_kv[:, 0]))
+        if dmv.numel() == moba_kv[:, 1].numel():
+            dmv.copy_(dmv.view_as(moba_kv[:, 1]))
 
         dmkv = torch.stack((dmk, dmv), dim=1)
         return dq, dk, dv, None, dmq, dmkv, None, None, None, None, None
