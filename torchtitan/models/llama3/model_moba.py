@@ -46,45 +46,57 @@ class MoBAAttention(Attention):
 
     def forward(
         self,
-        x: torch.Tensor,
+        x: torch.Tensor,  # [bs, seqlen, dim]
         freqs_cis: torch.Tensor,
     ):
         bs, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
-        xq = xq.view(bs, seqlen, -1, self.head_dim)
-        xk = xk.view(bs, seqlen, -1, self.head_dim)
-        xv = xv.view(bs, seqlen, -1, self.head_dim)
+        # [bs, seqlen, n_heads, head_dim]
+        xq = xq.view(bs, seqlen, self.n_heads, self.head_dim)
+        xk = xk.view(bs, seqlen, self.n_heads, self.head_dim)
+        xv = xv.view(bs, seqlen, self.n_heads, self.head_dim)
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
         keys = repeat_kv(xk, self.n_rep)
         values = repeat_kv(xv, self.n_rep)
 
-        xq = xq.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
-        xk = keys.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
-        xv = values.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
+        # [bs, n_heads, seqlen, head_dim]
+        xq = xq.transpose(1, 2)
+        xk = keys.transpose(1, 2)
+        xv = values.transpose(1, 2)
 
-        # Reshape for moba attention
-        xq = xq.reshape(-1, self.n_heads, seqlen, self.head_dim)  # [bs, n_heads, seqlen, head_dim]
-        xk = xk.reshape(-1, self.n_heads, seqlen, self.head_dim)  # [bs, n_heads, seqlen, head_dim]
-        xv = xv.reshape(-1, self.n_heads, seqlen, self.head_dim)  # [bs, n_heads, seqlen, head_dim]
+        # 处理每个batch
+        outputs = []
+        for i in range(bs):
+            # 取当前batch的数据
+            curr_q = xq[i].permute(1, 0, 2).contiguous()  # [seqlen, n_heads, head_dim]
+            curr_k = xk[i].permute(1, 0, 2).contiguous()
+            curr_v = xv[i].permute(1, 0, 2).contiguous()
 
-        # Create cumulative sequence lengths
-        cu_seqlens = torch.arange(0, (bs + 1) * seqlen, seqlen, device=x.device, dtype=torch.int32)
+            # 当前batch的序列长度
+            curr_cu_seqlens = torch.tensor([0, seqlen], device=x.device, dtype=torch.int32)
 
-        # Use Moba attention
-        output = moba_attn_varlen(
-            q=xq,
-            k=xk,
-            v=xv,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=seqlen,
-            moba_chunk_size=self.moba_config.moba_chunk_size,
-            moba_topk=self.moba_config.moba_topk,
-        )
+            # 对当前batch使用Moba attention
+            curr_output = moba_attn_varlen(
+                q=curr_q,  # [seqlen, n_heads, head_dim]
+                k=curr_k,  # [seqlen, n_heads, head_dim]
+                v=curr_v,  # [seqlen, n_heads, head_dim]
+                cu_seqlens=curr_cu_seqlens,  # [2]
+                max_seqlen=seqlen,  # 2048
+                moba_chunk_size=self.moba_config.moba_chunk_size,  # 64
+                moba_topk=self.moba_config.moba_topk,  # 8
+            )
 
-        output = output.view(bs, seqlen, -1)
+            # 调整输出形状
+            curr_output = curr_output.permute(1, 0, 2)  # [n_heads, seqlen, head_dim]
+            outputs.append(curr_output)
+
+        # 合并所有batch的输出
+        output = torch.stack(outputs, dim=0)  # [bs, n_heads, seqlen, head_dim]
+        output = output.transpose(1, 2)  # [bs, seqlen, n_heads, head_dim]
+        output = output.reshape(bs, seqlen, -1)  # [bs, seqlen, dim]
         return self.wo(output)
 
 class TransformerMoBA(Transformer):
