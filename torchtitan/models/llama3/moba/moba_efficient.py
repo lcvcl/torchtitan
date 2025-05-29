@@ -255,25 +255,27 @@ class MixedAttention(torch.autograd.Function):
 
         # If the original gradients have the correct number of elements, copy them
         if dmk.numel() == moba_kv[:, 0].numel():
-            dmk.copy_(dmk.view_as(moba_kv[:, 0]))
-        if dmv.numel() == moba_kv[:, 1].numel():
-            dmv.copy_(dmv.view_as(moba_kv[:, 1]))
-
-        # Ensure the shapes match the expected shapes while preserving the computation
-        if dmk.shape != moba_kv[:, 0].shape:
-            # Reshape while preserving the computation
+            # Reshape to match the expected dimensions
             dmk = dmk.reshape(-1, moba_kv[:, 0].shape[-1])
             if dmk.shape[0] != moba_kv[:, 0].shape[0]:
-                # If the first dimension doesn't match, we need to adjust
                 dmk = dmk[:moba_kv[:, 0].shape[0]]
-        if dmv.shape != moba_kv[:, 1].shape:
-            # Reshape while preserving the computation
+            # Transpose to match the expected shape
+            dmk = dmk.transpose(0, 1).contiguous()
+        if dmv.numel() == moba_kv[:, 1].numel():
+            # Reshape to match the expected dimensions
             dmv = dmv.reshape(-1, moba_kv[:, 1].shape[-1])
             if dmv.shape[0] != moba_kv[:, 1].shape[0]:
-                # If the first dimension doesn't match, we need to adjust
                 dmv = dmv[:moba_kv[:, 1].shape[0]]
+            # Transpose to match the expected shape
+            dmv = dmv.transpose(0, 1).contiguous()
 
+        # Stack the gradients
         dmkv = torch.stack((dmk, dmv), dim=1)
+
+        # Clear unnecessary tensors to free memory
+        del d_moba_output, moba_output, mixed_attn_vlse
+        torch.cuda.empty_cache()
+
         return dq, dk, dv, None, dmq, dmkv, None, None, None, None, None
 
 
