@@ -2,6 +2,7 @@
 
 import torch
 from flash_attn import flash_attn_varlen_func
+from flash_attn.flash_attn_interface import FlashAttnVarlenFunc
 from functools import lru_cache
 from einops import rearrange
 
@@ -81,33 +82,45 @@ class MixedAttention(torch.autograd.Function):
         ctx.softmax_scale = softmax_scale = q.shape[-1] ** (-0.5)
 
         # self attn
-        self_attn_out_sh, self_attn_lse_hs, _ = flash_attn_varlen_func(
-            q=q,
-            k=k,
-            v=v,
-            cu_seqlens_q=self_attn_cu_seqlen,
-            cu_seqlens_k=self_attn_cu_seqlen,
-            max_seqlen_q=max_seqlen,
-            max_seqlen_k=max_seqlen,
-            dropout_p=0.0,
-            softmax_scale=softmax_scale,
-            causal=True,
-            return_attn_probs=True,
+        self_attn_out_sh, self_attn_lse_hs, _ = FlashAttnVarlenFunc.apply(
+            q,
+            k,
+            v,
+            self_attn_cu_seqlen,
+            self_attn_cu_seqlen,
+            max_seqlen,
+            max_seqlen,
+            0.0,  # dropout_p
+            softmax_scale,
+            True,  # causal
+            (-1, -1),  # window_size
+            0.0,  # softcap
+            None,  # alibi_slopes
+            False,  # deterministic
+            True,  # return_attn_probs
+            None,  # block_table
+            torch.is_grad_enabled(),
         )
 
         # moba attn
-        moba_attn_out, moba_attn_lse_hs, _ = flash_attn_varlen_func(
-            q=moba_q,
-            k=moba_kv[:, 0],
-            v=moba_kv[:, 1],
-            cu_seqlens_q=moba_cu_seqlen_q,
-            cu_seqlens_k=moba_cu_seqlen_kv,
-            max_seqlen_q=max_seqlen,
-            max_seqlen_k=moba_chunk_size,
-            dropout_p=0.0,
-            softmax_scale=softmax_scale,
-            causal=False,
-            return_attn_probs=True,
+        moba_attn_out, moba_attn_lse_hs, _ = FlashAttnVarlenFunc.apply(
+            moba_q,
+            moba_kv[:, 0],
+            moba_kv[:, 1],
+            moba_cu_seqlen_q,
+            moba_cu_seqlen_kv,
+            max_seqlen,
+            moba_chunk_size,
+            0.0,  # dropout_p
+            softmax_scale,
+            False,  # causal
+            (-1, -1),  # window_size
+            0.0,  # softcap
+            None,  # alibi_slopes
+            False,  # deterministic
+            True,  # return_attn_probs
+            None,  # block_table
+            torch.is_grad_enabled(),
         )
 
         # convert lse shape hs -> sh ( follow the legacy mix attn logic )
@@ -179,7 +192,6 @@ class MixedAttention(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, d_output):
-
         max_seqlen = ctx.max_seqlen
         moba_chunk_size = ctx.moba_chunk_size
         softmax_scale = ctx.softmax_scale
@@ -200,20 +212,25 @@ class MixedAttention(torch.autograd.Function):
 
         d_output = d_output.contiguous()
 
-        dq, dk, dv = flash_attn_varlen_func.backward(
-            dout=d_output,
-            q=q,
-            k=k,
-            v=v,
-            out=output,
-            softmax_lse=mixed_attn_vlse_sh.t().contiguous(),
-            cu_seqlens_q=self_attn_cu_seqlen,
-            cu_seqlens_k=self_attn_cu_seqlen,
-            max_seqlen_q=max_seqlen,
-            max_seqlen_k=max_seqlen,
-            softmax_scale=softmax_scale,
-            causal=True,
-            dropout_p=0.0,
+        dq, dk, dv = FlashAttnVarlenFunc.backward(
+            d_output,
+            q,
+            k,
+            v,
+            output,
+            mixed_attn_vlse_sh.t().contiguous(),
+            self_attn_cu_seqlen,
+            self_attn_cu_seqlen,
+            max_seqlen,
+            max_seqlen,
+            0.0,  # dropout_p
+            softmax_scale,
+            True,  # causal
+            (-1, -1),  # window_size
+            0.0,  # softcap
+            None,  # alibi_slopes
+            False,  # deterministic
+            None,  # rng_state
         )
 
         headdim = q.shape[-1]
@@ -228,20 +245,25 @@ class MixedAttention(torch.autograd.Function):
             mixed_attn_vlse_sh.view(-1).index_select(0, moba_q_sh_indices).view(1, -1)
         )
 
-        dmq, dmk, dmv = flash_attn_varlen_func.backward(
-            dout=d_moba_output,
-            q=moba_q,
-            k=moba_kv[:, 0],
-            v=moba_kv[:, 1],
-            out=moba_output,
-            softmax_lse=mixed_attn_vlse,
-            cu_seqlens_q=moba_cu_seqlen_q,
-            cu_seqlens_k=moba_cu_seqlen_kv,
-            max_seqlen_q=max_seqlen,
-            max_seqlen_k=moba_chunk_size,
-            softmax_scale=softmax_scale,
-            causal=False,
-            dropout_p=0.0,
+        dmq, dmk, dmv = FlashAttnVarlenFunc.backward(
+            d_moba_output,
+            moba_q,
+            moba_kv[:, 0],
+            moba_kv[:, 1],
+            moba_output,
+            mixed_attn_vlse,
+            moba_cu_seqlen_q,
+            moba_cu_seqlen_kv,
+            max_seqlen,
+            moba_chunk_size,
+            0.0,  # dropout_p
+            softmax_scale,
+            False,  # causal
+            (-1, -1),  # window_size
+            0.0,  # softcap
+            None,  # alibi_slopes
+            False,  # deterministic
+            None,  # rng_state
         )
 
         dmkv = torch.stack((dmk, dmv), dim=1)
