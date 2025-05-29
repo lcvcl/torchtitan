@@ -243,6 +243,21 @@ class MixedAttention(torch.autograd.Function):
             return_attn_probs=True,
         )
 
+        # Handle the case where dmk and dmv have different sizes
+        if dmk.numel() == 0 or dmv.numel() == 0:
+            # If either gradient is empty, create zero tensors with the correct shape
+            if dmk.numel() == 0:
+                dmk = torch.zeros_like(moba_kv[:, 0])
+            if dmv.numel() == 0:
+                dmv = torch.zeros_like(moba_kv[:, 1])
+        elif dmk.shape != dmv.shape:
+            # If shapes don't match, resize to match the larger one
+            target_shape = max(dmk.shape, dmv.shape)
+            if dmk.shape != target_shape:
+                dmk = dmk.expand(target_shape)
+            if dmv.shape != target_shape:
+                dmv = dmv.expand(target_shape)
+
         dmkv = torch.stack((dmk, dmv), dim=1)
         return dq, dk, dv, None, dmq, dmkv, None, None, None, None, None
 
