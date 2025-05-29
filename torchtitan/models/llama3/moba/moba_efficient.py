@@ -86,7 +86,7 @@ class MixedAttention(torch.autograd.Function):
         ctx.softmax_scale = softmax_scale = q.shape[-1] ** (-0.5)
 
         # self attn
-        _, _, _, _, self_attn_out_sh, self_attn_lse_hs, _, _ = (
+        self_attn_out_sh, self_attn_lse_hs = (
             _flash_attn_varlen_forward(
                 q=q,
                 k=k,
@@ -102,7 +102,7 @@ class MixedAttention(torch.autograd.Function):
         )
 
         # moba attn
-        _, _, _, _, moba_attn_out, moba_attn_lse_hs, _, _ = _flash_attn_varlen_forward(
+        moba_attn_out, moba_attn_lse_hs = _flash_attn_varlen_forward(
             q=moba_q,
             k=moba_kv[:, 0],
             v=moba_kv[:, 1],
