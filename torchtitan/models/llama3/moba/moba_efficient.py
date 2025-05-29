@@ -201,23 +201,11 @@ class MixedAttention(torch.autograd.Function):
 
         d_output = d_output.contiguous()
 
-        # Create a context object for FlashAttnVarlenFunc
-        class FlashAttnContext:
-            def __init__(self, q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k):
-                self.saved_tensors = (q, k, v, out, softmax_lse, cu_seqlens_q, cu_seqlens_k, None)
-
         # Self attention backward
-        flash_ctx = FlashAttnContext(
-            q, k, v, output, mixed_attn_lse_sh.t().contiguous(),
-            self_attn_cu_seqlen, self_attn_cu_seqlen
-        )
-        dq, dk, dv = FlashAttnVarlenFunc.backward(
-            d_output,
+        dq, dk, dv = flash_attn_varlen_func(
             q,
             k,
             v,
-            output,
-            mixed_attn_lse_sh.t().contiguous(),
             self_attn_cu_seqlen,
             self_attn_cu_seqlen,
             max_seqlen,
@@ -225,11 +213,7 @@ class MixedAttention(torch.autograd.Function):
             0.0,  # dropout_p
             softmax_scale,
             True,  # causal
-            (-1, -1),  # window_size
-            0.0,  # softcap
-            None,  # alibi_slopes
-            False,  # deterministic
-            None,  # rng_state
+            return_attn_probs=True,
         )
 
         headdim = q.shape[-1]
@@ -245,17 +229,10 @@ class MixedAttention(torch.autograd.Function):
         )
 
         # MOBA attention backward
-        flash_ctx = FlashAttnContext(
-            moba_q, moba_kv[:, 0], moba_kv[:, 1], moba_output, mixed_attn_vlse,
-            moba_cu_seqlen_q, moba_cu_seqlen_kv
-        )
-        dmq, dmk, dmv = FlashAttnVarlenFunc.backward(
-            d_moba_output,
+        dmq, dmk, dmv = flash_attn_varlen_func(
             moba_q,
             moba_kv[:, 0],
             moba_kv[:, 1],
-            moba_output,
-            mixed_attn_vlse,
             moba_cu_seqlen_q,
             moba_cu_seqlen_kv,
             max_seqlen,
@@ -263,11 +240,7 @@ class MixedAttention(torch.autograd.Function):
             0.0,  # dropout_p
             softmax_scale,
             False,  # causal
-            (-1, -1),  # window_size
-            0.0,  # softcap
-            None,  # alibi_slopes
-            False,  # deterministic
-            None,  # rng_state
+            return_attn_probs=True,
         )
 
         dmkv = torch.stack((dmk, dmv), dim=1)
