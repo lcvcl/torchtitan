@@ -201,6 +201,17 @@ class MixedAttention(torch.autograd.Function):
 
         d_output = d_output.contiguous()
 
+        # 写入调试信息到文件
+        with open("/tmp/moba_debug.log", "a") as f:
+            print(f"=== Backward Debug Info ===", file=f, flush=True)
+            print(f"Input shapes and sizes:", file=f, flush=True)
+            print(f"q shape: {q.shape}, size: {q.numel()}", file=f, flush=True)
+            print(f"k shape: {k.shape}, size: {k.numel()}", file=f, flush=True)
+            print(f"v shape: {v.shape}, size: {v.numel()}", file=f, flush=True)
+            print(f"moba_kv shape: {moba_kv.shape}, size: {moba_kv.numel()}", file=f, flush=True)
+            print(f"moba_q shape: {moba_q.shape}, size: {moba_q.numel()}", file=f, flush=True)
+            print(f"d_output shape: {d_output.shape}, size: {d_output.numel()}", file=f, flush=True)
+
         # Self attention backward
         dq, dk, dv = flash_attn_varlen_func(
             q,
@@ -215,6 +226,12 @@ class MixedAttention(torch.autograd.Function):
             True,  # causal
             return_attn_probs=True,
         )
+
+        with open("/tmp/moba_debug.log", "a") as f:
+            print(f"After self attention backward:", file=f, flush=True)
+            print(f"dq shape: {dq.shape}, size: {dq.numel()}", file=f, flush=True)
+            print(f"dk shape: {dk.shape}, size: {dk.numel()}", file=f, flush=True)
+            print(f"dv shape: {dv.shape}, size: {dv.numel()}", file=f, flush=True)
 
         headdim = q.shape[-1]
         d_moba_output = (
@@ -243,56 +260,63 @@ class MixedAttention(torch.autograd.Function):
             return_attn_probs=True,
         )
 
-        # 写入调试信息到文件
         with open("/tmp/moba_debug.log", "a") as f:
+            print(f"After MOBA attention backward:", file=f, flush=True)
+            print(f"dmq shape: {dmq.shape}, size: {dmq.numel()}", file=f, flush=True)
             print(f"dmk shape: {dmk.shape}, size: {dmk.numel()}", file=f, flush=True)
             print(f"dmv shape: {dmv.shape}, size: {dmv.numel()}", file=f, flush=True)
-            print(f"moba_kv[:, 0] shape: {moba_kv[:, 0].shape}, size: {moba_kv[:, 0].numel()}", file=f, flush=True)
-            print(f"moba_kv[:, 1] shape: {moba_kv[:, 1].shape}, size: {moba_kv[:, 1].numel()}", file=f, flush=True)
-            print(f"q shape: {q.shape}", file=f, flush=True)
-            print(f"k shape: {k.shape}", file=f, flush=True)
-            print(f"v shape: {v.shape}", file=f, flush=True)
 
-        # Create new tensors with the correct shape
-        dmk = torch.zeros_like(moba_kv[:, 0])
-        dmv = torch.zeros_like(moba_kv[:, 1])
-
-        # If the original gradients have the correct number of elements, copy them
-        if dmk.numel() == moba_kv[:, 0].numel():
-            # Reshape to match the expected dimensions
-            dmk = dmk.reshape(-1, moba_kv[:, 0].shape[-1])
-            if dmk.shape[0] != moba_kv[:, 0].shape[0]:
-                dmk = dmk[:moba_kv[:, 0].shape[0]]
-            # Ensure the shape matches moba_kv[:, 0]
-            dmk = dmk.view_as(moba_kv[:, 0])
-        if dmv.numel() == moba_kv[:, 1].numel():
-            # Reshape to match the expected dimensions
-            dmv = dmv.reshape(-1, moba_kv[:, 1].shape[-1])
-            if dmv.shape[0] != moba_kv[:, 1].shape[0]:
-                dmv = dmv[:moba_kv[:, 1].shape[0]]
-            # Ensure the shape matches moba_kv[:, 1]
-            dmv = dmv.view_as(moba_kv[:, 1])
-
-        # Stack the gradients to match moba_kv shape
-        dmkv = torch.stack((dmk, dmv), dim=1)
-        with open("/tmp/moba_debug.log", "a") as f:
-            print(f"dmkv shape after stack: {dmkv.shape}, size: {dmkv.numel()}", file=f, flush=True)
-
-        # Transform the gradients to match the original kv shape
+        # Transform gradients to match original shapes
         num_head = 16  # From model config
         head_dim = 128  # dim / num_head = 2048 / 16 = 128
-        actual_seqlen = dmkv.numel() // (2 * num_head * head_dim)
+        
+        # Calculate expected sizes
+        expected_size = 2048 * 2 * num_head * head_dim  # [2048, 2, 16, 128]
+        actual_size = dmk.numel() + dmv.numel()
+        
         with open("/tmp/moba_debug.log", "a") as f:
-            print(f"Actual sequence length from tensor size: {actual_seqlen}", file=f, flush=True)
-        dmkv = dmkv.view(actual_seqlen, 2, num_head, head_dim)
+            print(f"Size check:", file=f, flush=True)
+            print(f"Expected total size: {expected_size}", file=f, flush=True)
+            print(f"Actual total size: {actual_size}", file=f, flush=True)
+        
+        # Stack k and v gradients
+        dmkv = torch.stack((dmk, dmv), dim=1)  # [seqlen, 2, head, head_dim]
+        
         with open("/tmp/moba_debug.log", "a") as f:
-            print(f"dmkv shape after first view: {dmkv.shape}", file=f, flush=True)
-        if actual_seqlen != 2048:
+            print(f"After stacking:", file=f, flush=True)
+            print(f"dmkv shape: {dmkv.shape}, size: {dmkv.numel()}", file=f, flush=True)
+
+        # Ensure the shape matches the expected output shape
+        if dmkv.shape != (2048, 2, num_head, head_dim):
+            with open("/tmp/moba_debug.log", "a") as f:
+                print(f"Reshaping dmkv from {dmkv.shape} to (2048, 2, {num_head}, {head_dim})", file=f, flush=True)
+            
+            # Create a new tensor with the correct shape
             new_dmkv = torch.zeros((2048, 2, num_head, head_dim), device=dmkv.device, dtype=dmkv.dtype)
-            new_dmkv[:actual_seqlen] = dmkv
+            
+            # Calculate how much data we can copy
+            actual_seqlen = min(dmkv.shape[0], 2048)
+            actual_heads = min(dmkv.shape[2], num_head)
+            actual_dim = min(dmkv.shape[3], head_dim)
+            
+            with open("/tmp/moba_debug.log", "a") as f:
+                print(f"Copying data with shapes:", file=f, flush=True)
+                print(f"actual_seqlen: {actual_seqlen}", file=f, flush=True)
+                print(f"actual_heads: {actual_heads}", file=f, flush=True)
+                print(f"actual_dim: {actual_dim}", file=f, flush=True)
+            
+            # Copy the data we have
+            new_dmkv[:actual_seqlen, :2, :actual_heads, :actual_dim] = dmkv[:actual_seqlen, :2, :actual_heads, :actual_dim]
             dmkv = new_dmkv
+
         with open("/tmp/moba_debug.log", "a") as f:
-            print(f"dmkv shape after final reshape: {dmkv.shape}", file=f, flush=True)
+            print(f"Final shapes and sizes:", file=f, flush=True)
+            print(f"dq shape: {dq.shape}, size: {dq.numel()}", file=f, flush=True)
+            print(f"dk shape: {dk.shape}, size: {dk.numel()}", file=f, flush=True)
+            print(f"dv shape: {dv.shape}, size: {dv.numel()}", file=f, flush=True)
+            print(f"dmq shape: {dmq.shape}, size: {dmq.numel()}", file=f, flush=True)
+            print(f"dmkv shape: {dmkv.shape}, size: {dmkv.numel()}", file=f, flush=True)
+            print(f"=== End Backward Debug Info ===\n", file=f, flush=True)
 
         # Clear unnecessary tensors to free memory
         del d_moba_output, moba_output, mixed_attn_vlse
