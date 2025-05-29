@@ -259,18 +259,30 @@ class MixedAttention(torch.autograd.Function):
             dmk = dmk.reshape(-1, moba_kv[:, 0].shape[-1])
             if dmk.shape[0] != moba_kv[:, 0].shape[0]:
                 dmk = dmk[:moba_kv[:, 0].shape[0]]
-            # Transpose to match the expected shape
-            dmk = dmk.transpose(0, 1).contiguous()
+            # Ensure the shape matches moba_kv[:, 0]
+            dmk = dmk.view_as(moba_kv[:, 0])
         if dmv.numel() == moba_kv[:, 1].numel():
             # Reshape to match the expected dimensions
             dmv = dmv.reshape(-1, moba_kv[:, 1].shape[-1])
             if dmv.shape[0] != moba_kv[:, 1].shape[0]:
                 dmv = dmv[:moba_kv[:, 1].shape[0]]
-            # Transpose to match the expected shape
-            dmv = dmv.transpose(0, 1).contiguous()
+            # Ensure the shape matches moba_kv[:, 1]
+            dmv = dmv.view_as(moba_kv[:, 1])
 
-        # Stack the gradients
+        # Stack the gradients to match moba_kv shape
         dmkv = torch.stack((dmk, dmv), dim=1)
+
+        # Transform the gradients to match the original kv shape
+        # First, unflatten the gradients
+        num_head = q.shape[1]
+        seqlen = q.shape[0]
+        head_dim = q.shape[2]
+        
+        # Reshape to match the original kv shape [seqlen, 2, head, head_dim]
+        dmkv = dmkv.view(-1, 2, num_head, head_dim)
+        dmkv = dmkv.transpose(0, 2).contiguous()  # [head, 2, seqlen, head_dim]
+        dmkv = dmkv.transpose(1, 2).contiguous()  # [head, seqlen, 2, head_dim]
+        dmkv = dmkv.reshape(seqlen, 2, num_head, head_dim)
 
         # Clear unnecessary tensors to free memory
         del d_moba_output, moba_output, mixed_attn_vlse
