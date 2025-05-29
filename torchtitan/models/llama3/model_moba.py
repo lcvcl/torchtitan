@@ -61,21 +61,29 @@ class MoBAAttention(Attention):
         keys = repeat_kv(xk, self.n_rep)
         values = repeat_kv(xv, self.n_rep)
 
-        xq = xq.transpose(1, 2)
-        xk = keys.transpose(1, 2)
-        xv = values.transpose(1, 2)
+        xq = xq.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
+        xk = keys.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
+        xv = values.transpose(1, 2)  # [bs, n_heads, seqlen, head_dim]
+
+        # Reshape for moba attention
+        xq = xq.reshape(-1, self.n_heads, seqlen, self.head_dim)  # [bs, n_heads, seqlen, head_dim]
+        xk = xk.reshape(-1, self.n_heads, seqlen, self.head_dim)  # [bs, n_heads, seqlen, head_dim]
+        xv = xv.reshape(-1, self.n_heads, seqlen, self.head_dim)  # [bs, n_heads, seqlen, head_dim]
+
+        # Create cumulative sequence lengths
+        cu_seqlens = torch.arange(0, (bs + 1) * seqlen, seqlen, device=x.device, dtype=torch.int32)
 
         # Use Moba attention
-        output, _ = moba_layer(
-            moba_impl=moba_attn_varlen,
-            moba_config=self.moba_config,
-            module=self,
-            query=xq,
-            key=xk,
-            value=xv,
+        output = moba_attn_varlen(
+            q=xq,
+            k=xk,
+            v=xv,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=seqlen,
+            moba_chunk_size=self.moba_config.moba_chunk_size,
+            moba_topk=self.moba_config.moba_topk,
         )
 
-        output = output.transpose(1, 2).contiguous()
         output = output.view(bs, seqlen, -1)
         return self.wo(output)
 
