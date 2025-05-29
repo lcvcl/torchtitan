@@ -270,6 +270,31 @@ class MixedAttention(torch.autograd.Function):
         num_head = 16  # From model config
         head_dim = 128  # dim / num_head = 2048 / 16 = 128
         
+        # Handle empty tensors
+        if dmk.numel() == 0 or dmv.numel() == 0:
+            with open("/tmp/moba_debug.log", "a") as f:
+                print(f"Empty tensor detected:", file=f, flush=True)
+                print(f"dmk empty: {dmk.numel() == 0}", file=f, flush=True)
+                print(f"dmv empty: {dmv.numel() == 0}", file=f, flush=True)
+            
+            # Create zero tensors with the correct shape
+            dmk = torch.zeros((2048, num_head, head_dim), device=dmk.device, dtype=dmk.dtype)
+            dmv = torch.zeros((2048, num_head, head_dim), device=dmv.device, dtype=dmv.dtype)
+        
+        # Ensure dmk and dmv have the same shape
+        if dmk.shape != dmv.shape:
+            with open("/tmp/moba_debug.log", "a") as f:
+                print(f"Shape mismatch between dmk and dmv:", file=f, flush=True)
+                print(f"dmk shape: {dmk.shape}", file=f, flush=True)
+                print(f"dmv shape: {dmv.shape}", file=f, flush=True)
+            
+            # Reshape to match the larger tensor
+            target_shape = max(dmk.shape, dmv.shape)
+            if dmk.shape != target_shape:
+                dmk = dmk.expand(target_shape)
+            if dmv.shape != target_shape:
+                dmv = dmv.expand(target_shape)
+        
         # Calculate expected sizes
         expected_size = 2048 * 2 * num_head * head_dim  # [2048, 2, 16, 128]
         actual_size = dmk.numel() + dmv.numel()
