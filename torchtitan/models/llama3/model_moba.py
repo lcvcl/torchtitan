@@ -62,6 +62,10 @@ class MoBAAttention(Attention):
             moba_topk=model_args.moba_topk
         )
         self.is_causal = True
+        
+        # 🚀 优化：预计算QKV分割点，避免运行时计算
+        self.q_dim = self.n_heads * self.head_dim
+        self.kv_dim = self.n_kv_heads * self.head_dim
 
     def forward(
         self,
@@ -69,9 +73,16 @@ class MoBAAttention(Attention):
         freqs_cis: torch.Tensor,
     ):
         bs, seqlen, _ = x.shape
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        
+        # 🚀 优化方案1：如果可能，使用融合QKV投影
+        if hasattr(self, '_use_fused_qkv') and self._use_fused_qkv:
+            # 融合版本：一次矩阵乘法代替三次
+            qkv = self._fused_qkv_proj(x)
+            xq, xk, xv = qkv.split([self.q_dim, self.kv_dim, self.kv_dim], dim=-1)
+        else:
+            # 标准版本：保持兼容性
+            xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
-        # 使用-1支持Tensor Parallel，自动推断head数量
         xq = xq.view(bs, seqlen, -1, self.head_dim)
         xk = xk.view(bs, seqlen, -1, self.head_dim)
         xv = xv.view(bs, seqlen, -1, self.head_dim)
@@ -79,7 +90,6 @@ class MoBAAttention(Attention):
         # 应用旋转位置编码
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        # 使用moba_layer处理，它会自动处理KV repeat和格式转换
         output, _ = moba_layer(
             moba_impl=moba_attn_varlen,
             moba_config=self.moba_config,
@@ -90,6 +100,27 @@ class MoBAAttention(Attention):
         )
 
         return self.wo(output.view(bs, seqlen, -1))
+    
+    def _setup_fused_qkv(self):
+        """🚀 设置融合QKV投影（可选优化）"""
+        try:
+            # 创建融合权重矩阵
+            fused_weight = torch.cat([
+                self.wq.weight,  # [q_dim, model_dim]
+                self.wk.weight,  # [kv_dim, model_dim] 
+                self.wv.weight   # [kv_dim, model_dim]
+            ], dim=0)  # [q_dim + 2*kv_dim, model_dim]
+            
+            self.register_buffer('_fused_qkv_weight', fused_weight)
+            self._use_fused_qkv = True
+            
+            def _fused_qkv_proj(x):
+                return torch.nn.functional.linear(x, self._fused_qkv_weight)
+            self._fused_qkv_proj = _fused_qkv_proj
+            
+        except Exception:
+            # 如果融合失败，回退到标准版本
+            self._use_fused_qkv = False
 
 class TransformerMoBA(Transformer):
     def __init__(self, model_args: MoBATransformerModelArgs):
@@ -97,6 +128,15 @@ class TransformerMoBA(Transformer):
         # Override the attention module with MoBA attention
         for layer in self.layers.values():
             layer.attention = MoBAAttention(model_args)
+            
+        # 🚀 可选：启用融合QKV优化（实验性）
+        self._enable_fused_qkv_optimization()
+
+    def _enable_fused_qkv_optimization(self):
+        """启用融合QKV矩阵乘法优化"""
+        for layer in self.layers.values():
+            if hasattr(layer.attention, '_setup_fused_qkv'):
+                layer.attention._setup_fused_qkv()
 
     @classmethod
     def from_model_args(cls, model_args: MoBATransformerModelArgs) -> "TransformerMoBA":
